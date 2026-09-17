@@ -123,14 +123,24 @@ jobs:
       - name: Write the pixiewood manifest
         run: |
           cd gtk-src
-          # NOTE: this manifest is a best-effort guess based on pixiewood's
-          # documented XML format. It will very likely need correcting once
-          # we see the real error - that's expected, not a sign of failure.
-          cat > /tmp/demo.pixiewood.xml <<'EOF'
+          # Find the real appstream metainfo file for the demo app instead of
+          # guessing its path - GTK's source layout can change, and pixiewood
+          # needs XInclude to point at a file that actually contains
+          # <id>org.gtk.Demo4</id>.
+          METAINFO_PATH=$(find . -iname 'org.gtk.Demo4*metainfo*' | head -n1)
+          if [ -z "$METAINFO_PATH" ]; then
+            echo "ERROR: could not find an org.gtk.Demo4 metainfo file under gtk-src/ - listing candidates:"
+            find . -iname '*.metainfo.xml*'
+            exit 1
+          fi
+          echo "Using metainfo file: $METAINFO_PATH"
+          # Strip the leading ./ so it's a clean relative path for XInclude.
+          METAINFO_PATH="${METAINFO_PATH#./}"
+          cat > /tmp/demo.pixiewood.xml <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <app xmlns="https://sp1rit.arpa/pixiewood/">
             <metainfo vercalc="count">
-              <!-- placeholder: real appstream metainfo path TBD -->
+              <xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="${METAINFO_PATH}"/>
             </metainfo>
             <style>
               <theme name="gtk"/>
@@ -147,6 +157,7 @@ jobs:
             </build>
           </app>
           EOF
+          cat /tmp/demo.pixiewood.xml
 
       # `prepare` configures the meson build and fetches wrap subprojects
       # (this is where fdk-aac's source gets cloned in) - confirmed working
