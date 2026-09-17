@@ -142,6 +142,9 @@ jobs:
                 <metadata_license>CC0-1.0</metadata_license>
                 <project_license>LGPL-2.1-or-later</project_license>
                 <launchable type="desktop-id">org.gtk.Demo4.desktop</launchable>
+                <releases>
+                  <release version="1.0" date="2026-01-01"/>
+                </releases>
               </component>
             </metainfo>
             <style>
