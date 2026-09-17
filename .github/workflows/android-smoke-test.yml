@@ -123,17 +123,19 @@ jobs:
       - name: Write the pixiewood manifest
         run: |
           cd gtk-src
-          # Rather than depend on locating GTK's own metainfo file (its path
-          # can differ across versions, and we couldn't find it), author a
-          # minimal, valid, self-contained appstream <component> block
-          # directly - pixiewood's <metainfo> element just needs to resolve
-          # to something with a real <id>, it doesn't need to be GTK's own
-          # shipped file.
+          # Root cause found by reading pixiewood's own source (line ~423):
+          # it looks up the component id with the XPath
+          #   /pw:app/pw:metainfo/meta:component/meta:id[not(@xml:lang)]
+          # where "meta" is bound to the appstream metainfo namespace
+          # https://specifications.freedesktop.org/metainfo/1.0 (see
+          # xpc_for_manifest() in the pixiewood script). Our previous
+          # <component>/<id> had NO namespace, so that XPath never matched
+          # them at all - hence the error even with a literal <id> present.
           cat > /tmp/demo.pixiewood.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <app xmlns="https://sp1rit.arpa/pixiewood/">
             <metainfo vercalc="count">
-              <component type="desktop-application">
+              <component type="desktop-application" xmlns="https://specifications.freedesktop.org/metainfo/1.0">
                 <id>org.gtk.Demo4</id>
                 <name>GTK Demo</name>
                 <summary>Program to demonstrate GTK functions</summary>
@@ -148,7 +150,7 @@ jobs:
             <dependencies>
               <glib><patch>hack</patch></glib>
               <fontconfig/>
-              <gtk/>
+              <gtk><patch>demo</patch></gtk>
             </dependencies>
             <build target="gtk4-demo">
               <architectures>
