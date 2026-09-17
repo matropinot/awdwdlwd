@@ -66,8 +66,16 @@ jobs:
             libjson-perl libset-scalar-perl libxml-libxml-perl \
             libxml-libxslt-perl gir1.2-appstream \
             build-essential glslc gobject-introspection \
-            libglib2.0-dev-bin libxml2-utils meson ninja-build sassc \
-            git pkg-config
+            libglib2.0-dev-bin libxml2-utils ninja-build sassc \
+            git pkg-config python3-pip
+          # NOTE: deliberately NOT installing `meson` from apt here - Ubuntu
+          # 24.04's apt package is 1.3.2, but GTK's own meson.build now
+          # requires >= 1.8.0, and pixiewood itself wants >= 1.9 for the
+          # android_exe_type kwarg. Installing a fresh one via pip instead:
+      - name: Install a recent meson via pip (apt's version is too old)
+        run: |
+          sudo pip3 install --break-system-packages --upgrade 'meson>=1.9'
+          meson --version   # should print >= 1.9.x, not 1.3.2
 
       # ---- Rust toolchain + cargo-ndk (needed later for Amberol, harmless
       #      to install now so we don't pay for a second full runner setup) --
