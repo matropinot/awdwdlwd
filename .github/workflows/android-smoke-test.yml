@@ -123,24 +123,24 @@ jobs:
       - name: Write the pixiewood manifest
         run: |
           cd gtk-src
-          # Find the real appstream metainfo file for the demo app instead of
-          # guessing its path - GTK's source layout can change, and pixiewood
-          # needs XInclude to point at a file that actually contains
-          # <id>org.gtk.Demo4</id>.
-          METAINFO_PATH=$(find . -iname 'org.gtk.Demo4*metainfo*' | head -n1)
-          if [ -z "$METAINFO_PATH" ]; then
-            echo "ERROR: could not find an org.gtk.Demo4 metainfo file under gtk-src/ - listing candidates:"
-            find . -iname '*.metainfo.xml*'
-            exit 1
-          fi
-          echo "Using metainfo file: $METAINFO_PATH"
-          # Strip the leading ./ so it's a clean relative path for XInclude.
-          METAINFO_PATH="${METAINFO_PATH#./}"
-          cat > /tmp/demo.pixiewood.xml <<EOF
+          # Rather than depend on locating GTK's own metainfo file (its path
+          # can differ across versions, and we couldn't find it), author a
+          # minimal, valid, self-contained appstream <component> block
+          # directly - pixiewood's <metainfo> element just needs to resolve
+          # to something with a real <id>, it doesn't need to be GTK's own
+          # shipped file.
+          cat > /tmp/demo.pixiewood.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <app xmlns="https://sp1rit.arpa/pixiewood/">
             <metainfo vercalc="count">
-              <xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="${METAINFO_PATH}"/>
+              <component type="desktop-application">
+                <id>org.gtk.Demo4</id>
+                <name>GTK Demo</name>
+                <summary>Program to demonstrate GTK functions</summary>
+                <metadata_license>CC0-1.0</metadata_license>
+                <project_license>LGPL-2.1-or-later</project_license>
+                <launchable type="desktop-id">org.gtk.Demo4.desktop</launchable>
+              </component>
             </metainfo>
             <style>
               <theme name="gtk"/>
