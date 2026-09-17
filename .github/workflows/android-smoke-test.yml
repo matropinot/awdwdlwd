@@ -1,0 +1,218 @@
+# ==========================================================================
+# PHASE 0 - TOOLCHAIN SMOKE TEST (not Amberol yet, on purpose)
+# ==========================================================================
+# Goal: prove, on a throwaway GitHub-hosted runner, that we can install
+# pixiewood + its dependencies and produce SOME working Android APK from a
+# GTK4 app, before we spend any effort adapting Amberol's own build.
+#
+# Why start here instead of jumping straight to Amberol:
+#  - Amberol's meson.build currently builds via a `custom_target` that shells
+#    out to `cargo build`, NOT a real meson `executable()`. Pixiewood's own
+#    README says it needs a real `executable()` with the kwarg
+#    `android_exe_type: 'application'` (meson >= 1.9).
+#  - It's not yet confirmed whether that kwarg exists in a released, stock
+#    meson, or only in a fork/patch that GTK's own CI and pixiewood use
+#    internally (pixiewood's docs show a `--meson <forked/meson/meson.py>`
+#    flag, hinting at a patched meson).
+#  - Rather than guess blindly, this workflow tries the straightforward
+#    path first (pip-installed meson) against the SIMPLEST possible GTK4
+#    app (GTK's own demo), and the failure (if any) tells us exactly what's
+#    missing - a specific meson version, a specific patch, a specific
+#    pixiewood flag, etc. That failure log is the fastest way forward.
+#
+# HOW TO USE THIS FILE:
+#   1. Create a new, empty GitHub repo (or a scratch branch of anything).
+#   2. Put this file at .github/workflows/android-smoke-test.yml
+#   3. Push. Go to the "Actions" tab and watch it run.
+#   4. Whatever step fails, copy the FULL log text of that step back here
+#      and we fix this file together - this is much faster than me trying
+#      to guess every dependency version from search results.
+#
+# Nothing here is guaranteed to work on the first try. Treat every red X in
+# the Actions log as useful information, not a dead end - that's the normal
+# way this kind of bleeding-edge toolchain work goes.
+# ==========================================================================
+
+name: android-smoke-test
+
+on:
+  workflow_dispatch: {}   # run manually from the Actions tab
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/android-smoke-test.yml'
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout (this repo, only needed so Actions has something to run from)
+        uses: actions/checkout@v4
+
+      # ---- Java (pixiewood bundles Svg2Avd, which needs Java >= 17) -------
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ---- System packages pixiewood's README lists for Debian/Ubuntu -----
+      - name: Install pixiewood's declared Debian/Ubuntu dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libglib-perl libglib-object-introspection-perl libipc-run-perl \
+            libjson-perl libset-scalar-perl libxml-libxml-perl \
+            libxml-libxslt-perl gir1.2-appstream \
+            build-essential glslc gobject-introspection \
+            libglib2.0-dev-bin libxml2-utils ninja-build sassc \
+            git pkg-config python3-pip
+          # NOTE: deliberately NOT installing `meson` from apt here - Ubuntu
+          # 24.04's apt package is 1.3.2, but GTK's own meson.build now
+          # requires >= 1.8.0, and pixiewood itself wants >= 1.9 for the
+          # android_exe_type kwarg. Installing a fresh one via pip instead:
+      - name: Install a recent meson via pip (apt's version is too old)
+        run: |
+          sudo pip3 install --break-system-packages --upgrade 'meson>=1.9'
+          meson --version   # should print >= 1.9.x, not 1.3.2
+
+      # ---- Rust toolchain + cargo-ndk (needed later for Amberol, harmless
+      #      to install now so we don't pay for a second full runner setup) --
+      - name: Install Rust + Android targets + cargo-ndk
+        run: |
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          cargo install cargo-ndk --locked
+
+      - name: Install Android cmdline-tools
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 11076708
+          # The action's default `packages` value is "tools platform-tools".
+          # The legacy "tools" package no longer exists in Google's SDK
+          # repository (this is what caused "Failed to find package 'tools'"
+          # last run), so we only ask for platform-tools here.
+          packages: 'platform-tools'
+      - name: Install Android NDK package
+        run: yes | sdkmanager --install "ndk;26.1.10909125" >/dev/null
+
+      # ---- Clone pixiewood itself -------------------------------------
+      - name: Clone pixiewood (gtk-android-builder)
+        run: git clone --depth=1 https://github.com/sp1ritCS/gtk-android-builder.git pixiewood-src
+
+      - name: Install pixiewood
+        run: sudo make -C pixiewood-src install
+
+      # ---- Report versions so the log is self-explanatory on failure ------
+      - name: Report toolchain versions (for debugging)
+        run: |
+          echo "--- meson ---"; meson --version
+          echo "--- ninja ---"; ninja --version
+          echo "--- rustc ---"; rustc --version
+          echo "--- cargo-ndk ---"; cargo ndk --version || true
+          echo "--- pixiewood ---"; pixiewood --help || true
+          echo "--- java ---"; java -version
+
+      # ---- The actual smoke test: try GTK's own demo app -----------------
+      # This step is EXPECTED to need iteration - it's the first time we're
+      # running this exact combination for real. Whatever error shows up
+      # here is what we debug next, together.
+      - name: Clone GTK (for its demos/ + gdk/android)
+        run: git clone --depth=1 https://gitlab.gnome.org/GNOME/gtk.git gtk-src
+
+      - name: Write the pixiewood manifest
+        run: |
+          cd gtk-src
+          # NOTE: this manifest is a best-effort guess based on pixiewood's
+          # documented XML format. It will very likely need correcting once
+          # we see the real error - that's expected, not a sign of failure.
+          cat > /tmp/demo.pixiewood.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <app xmlns="https://sp1rit.arpa/pixiewood/">
+            <metainfo vercalc="count">
+              <!-- placeholder: real appstream metainfo path TBD -->
+            </metainfo>
+            <style>
+              <theme name="gtk"/>
+            </style>
+            <dependencies>
+              <glib><patch>hack</patch></glib>
+              <fontconfig/>
+              <gtk/>
+            </dependencies>
+            <build target="gtk4-demo">
+              <architectures>
+                <arch>aarch64</arch>
+              </architectures>
+            </build>
+          </app>
+          EOF
+
+      # `prepare` configures the meson build and fetches wrap subprojects
+      # (this is where fdk-aac's source gets cloned in) - confirmed working
+      # in the previous run, so we no longer swallow its exit code.
+      - name: pixiewood prepare
+        run: cd gtk-src && pixiewood prepare /tmp/demo.pixiewood.xml
+
+      # Real error from the previous run: fdk-aac (a GStreamer codec
+      # subproject pulled in transitively) has one file that does
+      #   #ifdef __ANDROID__
+      #   #include "log/log.h"
+      #   #endif
+      # `log/log.h` is a private AOSP platform header (from
+      # system/logging/liblog) that is NOT shipped in the public NDK
+      # sysroot - only <android/log.h> is. This is a known gap when
+      # building fdk-aac with the NDK instead of a full AOSP tree.
+      # Fix: replace that include with no-op logging macros. We don't
+      # need fdk-aac's debug logging for this smoke test (or for
+      # Amberol later), and no-ops mean we don't have to also link
+      # liblog for this subproject.
+      - name: Patch fdk-aac's Android-only log.h include
+        run: |
+          FILE="gtk-src/subprojects/fdk-aac-2.0.3/libSBRdec/src/lpp_tran.cpp"
+          if [ -f "$FILE" ]; then
+            if grep -q '"log/log.h"' "$FILE"; then
+              python3 - "$FILE" <<'PYEOF'
+          import sys
+          path = sys.argv[1]
+          with open(path) as f:
+              content = f.read()
+          old = '#ifdef __ANDROID__\n#include "log/log.h"\n#endif'
+          new = (
+              '#ifdef __ANDROID__\n'
+              '#define ALOGE(...) ((void)0)\n'
+              '#define ALOGW(...) ((void)0)\n'
+              '#define ALOGI(...) ((void)0)\n'
+              '#define ALOGD(...) ((void)0)\n'
+              '#define ALOGV(...) ((void)0)\n'
+              '#endif'
+          )
+          if old not in content:
+              sys.exit(f"expected block not found verbatim in {path} - inspect the file manually")
+          content = content.replace(old, new)
+          with open(path, 'w') as f:
+              f.write(content)
+          print(f"patched {path}")
+          PYEOF
+            else
+              echo "log/log.h include not found in $FILE - maybe already patched or file moved, skipping"
+            fi
+          else
+            echo "WARNING: $FILE does not exist yet - fdk-aac subproject layout may differ from what we assumed"
+          fi
+
+      - name: pixiewood generate
+        run: cd gtk-src && pixiewood generate
+
+      - name: pixiewood build
+        run: cd gtk-src && pixiewood build
+
+      - name: Upload whatever build artifacts exist (for inspection either way)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-output
+          path: |
+            gtk-src/**/*.apk
+            gtk-src/build/
+          if-no-files-found: warn
