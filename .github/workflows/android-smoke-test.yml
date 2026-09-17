@@ -1,44 +1,10 @@
-# ==========================================================================
-# PHASE 0 - TOOLCHAIN SMOKE TEST (not Amberol yet, on purpose)
-# ==========================================================================
-# Goal: prove, on a throwaway GitHub-hosted runner, that we can install
-# pixiewood + its dependencies and produce SOME working Android APK from a
-# GTK4 app, before we spend any effort adapting Amberol's own build.
-#
-# Why start here instead of jumping straight to Amberol:
-#  - Amberol's meson.build currently builds via a `custom_target` that shells
-#    out to `cargo build`, NOT a real meson `executable()`. Pixiewood's own
-#    README says it needs a real `executable()` with the kwarg
-#    `android_exe_type: 'application'` (meson >= 1.9).
-#  - It's not yet confirmed whether that kwarg exists in a released, stock
-#    meson, or only in a fork/patch that GTK's own CI and pixiewood use
-#    internally (pixiewood's docs show a `--meson <forked/meson/meson.py>`
-#    flag, hinting at a patched meson).
-#  - Rather than guess blindly, this workflow tries the straightforward
-#    path first (pip-installed meson) against the SIMPLEST possible GTK4
-#    app (GTK's own demo), and the failure (if any) tells us exactly what's
-#    missing - a specific meson version, a specific patch, a specific
-#    pixiewood flag, etc. That failure log is the fastest way forward.
-#
-# HOW TO USE THIS FILE:
-#   1. Create a new, empty GitHub repo (or a scratch branch of anything).
-#   2. Put this file at .github/workflows/android-smoke-test.yml
-#   3. Push. Go to the "Actions" tab and watch it run.
-#   4. Whatever step fails, copy the FULL log text of that step back here
-#      and we fix this file together - this is much faster than me trying
-#      to guess every dependency version from search results.
-#
-# Nothing here is guaranteed to work on the first try. Treat every red X in
-# the Actions log as useful information, not a dead end - that's the normal
-# way this kind of bleeding-edge toolchain work goes.
-# ==========================================================================
 
 name: android-smoke-test
 
 on:
-  workflow_dispatch: {}   # run manually from the Actions tab
+  workflow_dispatch: {}
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
       - '.github/workflows/android-smoke-test.yml'
 
@@ -46,87 +12,146 @@ jobs:
   smoke-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+
     steps:
-      - name: Checkout (this repo, only needed so Actions has something to run from)
+      # ---- Checkout -----------------------------------------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ---- Java (pixiewood bundles Svg2Avd, which needs Java >= 17) -------
+      # ---- Java ---------------------------------------------------------
+      # pixiewood bundles Svg2Avd, which requires Java >= 17.
       - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      # ---- System packages pixiewood's README lists for Debian/Ubuntu -----
-      - name: Install pixiewood's declared Debian/Ubuntu dependencies
+      # ---- System dependencies -----------------------------------------
+      - name: Install pixiewood Debian/Ubuntu dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libglib-perl libglib-object-introspection-perl libipc-run-perl \
-            libjson-perl libset-scalar-perl libxml-libxml-perl \
-            libxml-libxslt-perl gir1.2-appstream \
-            build-essential glslc gobject-introspection \
-            libglib2.0-dev-bin libxml2-utils meson ninja-build sassc \
-            git pkg-config
+            libglib-perl \
+            libglib-object-introspection-perl \
+            libipc-run-perl \
+            libjson-perl \
+            libset-scalar-perl \
+            libxml-libxml-perl \
+            libxml-libxslt-perl \
+            gir1.2-appstream \
+            build-essential \
+            glslc \
+            gobject-introspection \
+            libglib2.0-dev-bin \
+            libxml2-utils \
+            meson \
+            ninja-build \
+            sassc \
+            git \
+            pkg-config
 
-      # ---- Rust toolchain + cargo-ndk (needed later for Amberol, harmless
-      #      to install now so we don't pay for a second full runner setup) --
-      - name: Install Rust + Android targets + cargo-ndk
+      # ---- Rust ---------------------------------------------------------
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust Android targets
         run: |
-          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
-          cargo install cargo-ndk --locked
+          rustup target add \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            x86_64-linux-android
 
-      - name: Install Android NDK
-        uses: android-actions/setup-android@v3
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      # ---- Android SDK --------------------------------------------------
+      # Install command-line tools and platform-tools.
+      # Explicit packages avoids setup-android's default "tools" package.
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
         with:
           cmdline-tools-version: 11076708
-      - name: Install NDK package
-        run: yes | sdkmanager --install "ndk;26.1.10909125" >/dev/null
+          packages: 'platform-tools'
+          accept-android-sdk-licenses: 'true'
 
-      # ---- Clone pixiewood itself -------------------------------------
+      - name: Accept Android SDK licenses
+        run: |
+          yes | sdkmanager --licenses
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager --verbose \
+            --install "ndk;26.1.10909125"
+
+      # ---- Report versions ---------------------------------------------
+      - name: Report toolchain versions
+        run: |
+          echo "--- meson ---"
+          meson --version
+
+          echo "--- ninja ---"
+          ninja --version
+
+          echo "--- rustc ---"
+          rustc --version
+
+          echo "--- cargo-ndk ---"
+          cargo ndk --version || true
+
+          echo "--- java ---"
+          java -version
+
+          echo "--- sdkmanager ---"
+          sdkmanager --version
+
+          echo "--- ANDROID_HOME ---"
+          echo "${ANDROID_HOME:-not set}"
+
+      # ---- Clone pixiewood ---------------------------------------------
       - name: Clone pixiewood (gtk-android-builder)
-        run: git clone --depth=1 https://github.com/sp1ritCS/gtk-android-builder.git pixiewood-src
+        run: |
+          git clone --depth=1 \
+            https://github.com/sp1ritCS/gtk-android-builder.git \
+            pixiewood-src
 
       - name: Install pixiewood
-        run: sudo make -C pixiewood-src install
-
-      # ---- Report versions so the log is self-explanatory on failure ------
-      - name: Report toolchain versions (for debugging)
         run: |
-          echo "--- meson ---"; meson --version
-          echo "--- ninja ---"; ninja --version
-          echo "--- rustc ---"; rustc --version
-          echo "--- cargo-ndk ---"; cargo ndk --version || true
-          echo "--- pixiewood ---"; pixiewood --help || true
-          echo "--- java ---"; java -version
+          sudo make -C pixiewood-src install
 
-      # ---- The actual smoke test: try GTK's own demo app -----------------
-      # This step is EXPECTED to need iteration - it's the first time we're
-      # running this exact combination for real. Whatever error shows up
-      # here is what we debug next, together.
-      - name: Clone GTK (for its demos/ + gdk/android)
-        run: git clone --depth=1 https://gitlab.gnome.org/GNOME/gtk.git gtk-src
-
-      - name: Attempt to prepare/generate/build the GTK demo for Android
+      - name: Report pixiewood version
         run: |
-          cd gtk-src
-          # NOTE: this manifest is a best-effort guess based on pixiewood's
-          # documented XML format. It will very likely need correcting once
-          # we see the real error - that's expected, not a sign of failure.
+          pixiewood --help || true
+
+      # ---- Clone GTK ----------------------------------------------------
+      - name: Clone GTK (for demos and gdk/android)
+        run: |
+          git clone --depth=1 \
+            https://gitlab.gnome.org/GNOME/gtk.git \
+            gtk-src
+
+      # ---- Pixiewood smoke test ----------------------------------------
+      - name: Attempt to prepare GTK demo for Android
+        working-directory: gtk-src
+        run: |
           cat > /tmp/demo.pixiewood.xml <<'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <app xmlns="https://sp1rit.arpa/pixiewood/">
             <metainfo vercalc="count">
-              <!-- placeholder: real appstream metainfo path TBD -->
+              <!-- Placeholder: real appstream metainfo path TBD -->
             </metainfo>
+
             <style>
               <theme name="gtk"/>
             </style>
+
             <dependencies>
-              <glib><patch>hack</patch></glib>
+              <glib>
+                <patch>hack</patch>
+              </glib>
               <fontconfig/>
               <gtk/>
             </dependencies>
+
             <build target="gtk4-demo">
               <architectures>
                 <arch>aarch64</arch>
@@ -134,11 +159,13 @@ jobs:
             </build>
           </app>
           EOF
-          pixiewood prepare /tmp/demo.pixiewood.xml || true
-          pixiewood generate || true
-          pixiewood build || true
 
-      - name: Upload whatever build artifacts exist (for inspection either way)
+          pixiewood prepare /tmp/demo.pixiewood.xml
+          pixiewood generate
+          pixiewood build
+
+      # ---- Upload artifacts --------------------------------------------
+      - name: Upload build artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
