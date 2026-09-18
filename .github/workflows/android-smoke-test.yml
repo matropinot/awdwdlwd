@@ -103,6 +103,35 @@ jobs:
       - name: Install pixiewood
         run: sudo make -C pixiewood-src install
 
+      # pixiewood's icon-generation helper (Svg2Avd) needs
+      # com.android.ide.common.vectordrawable.Svg2Vector, which normally
+      # ships inside Android Studio's bundled
+      # plugins/android/lib/sdk-common.jar. Installing the full multi-GB
+      # Android Studio IDE just for this one class would be wasteful and
+      # slow, so instead fetch the real "sdk-common" library (same class)
+      # from Google's Maven repo and bundle it + its runtime dependencies
+      # into a single fat jar at the exact path pixiewood looks for
+      # (it only ever references one fixed jar path, so everything needed
+      # has to be in that one file).
+      - name: Fetch sdk-common (Svg2Vector) as a fat jar for pixiewood
+        run: |
+          mkdir -p /tmp/sdk-common-fatjar && cd /tmp/sdk-common-fatjar
+          cat > build.gradle.kts <<'EOF'
+          plugins { java }
+          repositories { google(); mavenCentral() }
+          dependencies { implementation("com.android.tools:sdk-common:+") }
+          tasks.register<Jar>("fatJar") {
+              archiveFileName.set("sdk-common.jar")
+              destinationDirectory.set(layout.buildDirectory.dir("fatjar"))
+              duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+              from(configurations.runtimeClasspath.get().files.map { if (it.isDirectory) it else zipTree(it) })
+          }
+          EOF
+          gradle --console=plain -q fatJar
+          sudo mkdir -p /opt/android-studio/plugins/android/lib
+          sudo cp build/fatjar/sdk-common.jar /opt/android-studio/plugins/android/lib/sdk-common.jar
+          ls -la /opt/android-studio/plugins/android/lib/
+
       # ---- Report versions so the log is self-explanatory on failure ------
       - name: Report toolchain versions (for debugging)
         run: |
