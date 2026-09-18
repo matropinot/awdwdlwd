@@ -278,3 +278,8 @@ jobs:
             gtk-src/**/*.apk
             gtk-src/build/
           if-no-files-found: warn
+          # The APK lives under a hidden directory (gtk-src/.pixiewood/...),
+          # and upload-artifact's glob excludes dotfiles/dot-directories by
+          # default - which is why "BUILD SUCCESSFUL" in the build step
+          # still produced "No files were found" here.
+          include-hidden-files: true
