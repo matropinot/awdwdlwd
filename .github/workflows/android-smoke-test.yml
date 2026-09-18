@@ -124,7 +124,13 @@ jobs:
               archiveFileName.set("sdk-common.jar")
               destinationDirectory.set(layout.buildDirectory.dir("fatjar"))
               duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-              from(configurations.runtimeClasspath.get().files.map { if (it.isDirectory) it else zipTree(it) })
+              from(configurations.runtimeClasspath.get().files.map { if (it.isDirectory) it else zipTree(it) }) {
+                  // Merging signed jars without stripping their signature
+                  // files causes "Invalid signature file digest" at
+                  // classload time, since the merged manifest no longer
+                  // matches the original per-jar signatures.
+                  exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA", "META-INF/*.EC")
+              }
           }
           EOF
           gradle --console=plain -q fatJar
