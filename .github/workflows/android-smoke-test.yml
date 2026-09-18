@@ -201,6 +201,7 @@ jobs:
               '#define ALOGI(...) ((void)0)\n'
               '#define ALOGD(...) ((void)0)\n'
               '#define ALOGV(...) ((void)0)\n'
+              '#define android_errorWriteLog(...) ((void)0)\n'
               '#endif'
           )
           if old not in content:
